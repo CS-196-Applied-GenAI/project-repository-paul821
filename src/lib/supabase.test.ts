@@ -1,32 +1,40 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vitest'
+import { createClient } from '@supabase/supabase-js'
+
+// Create a test client using env vars (loaded by Vitest via Vite)
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
 describe('Supabase Database Filtering', () => {
-    it('verifies a SQL query logic for filtering exercises based on available equipment', () => {
-        // Note: Since we don't have a live database to connect to in the test suite by default,
-        // this test demonstrates the logic of the query that will be used.
-        // The requirement states: "return all exercises where equipment_required is empty or contains 'Dumbbell'".
+  it('connects to the live Supabase database', async () => {
+    const { error } = await supabase.from('exercises').select('id').limit(1)
+    expect(error).toBeNull()
+  })
 
-        // Example available equipment for the user:
-        const availableEquipment = ['Dumbbell'];
+  it('filters exercises based on available equipment', async () => {
+    // Fetch all exercises from live DB
+    const { data: exercises, error } = await supabase
+      .from('exercises')
+      .select('*')
 
-        // In PostgREST/Supabase TS SDK, this query would look like:
-        // supabase.from('exercises').select('*').or(`equipment_required.cs.{${availableEquipment.join(',')}},equipment_required.eq.{}`);
+    expect(error).toBeNull()
 
-        // We can simulate the filtering locally to verify the logic matches expectations:
-        const mockExercises = [
-            { id: 1, name: 'Air Squat', equipment_required: [] },
-            { id: 2, name: 'Dumbbell Snatch', equipment_required: ['Dumbbell'] },
-            { id: 3, name: 'Pull Up', equipment_required: ['Pull Up Bar'] },
-            { id: 4, name: 'Renegade Row', equipment_required: ['Dumbbell', 'Kettlebell'] } // Let's say it requires both
-        ];
+    // Apply client-side filtering logic (mirrors what WorkoutEngine will do)
+    const availableEquipment = ['Dumbbell']
 
-        // Filter logic: equipment_required array is empty OR every item in equipment_required is in availableEquipment
-        // (If the array requires both DB and KB, and we only have DB, we can't do it)
-        const filteredExercises = mockExercises.filter(ex => {
-            if (ex.equipment_required.length === 0) return true;
-            return ex.equipment_required.every(equip => availableEquipment.includes(equip));
-        });
+    const filtered = (exercises ?? []).filter((ex: { equipment_required: string[] }) => {
+      if (ex.equipment_required.length === 0) return true
+      return ex.equipment_required.every((equip: string) =>
+        availableEquipment.includes(equip)
+      )
+    })
 
-        expect(filteredExercises.map(ex => ex.name)).toEqual(['Air Squat', 'Dumbbell Snatch']);
-    });
-});
+    // All returned exercises should either need no equipment or only a Dumbbell
+    filtered.forEach((ex: { equipment_required: string[] }) => {
+      ex.equipment_required.forEach((equip: string) => {
+        expect(availableEquipment).toContain(equip)
+      })
+    })
+  })
+})

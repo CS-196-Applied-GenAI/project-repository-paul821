@@ -1,163 +1,333 @@
-import { useState } from 'react';
-import type { GeneratedTimeBlock, Workout } from './lib/WorkoutEngine';
-import { WorkoutEngine } from './lib/WorkoutEngine';
-
-const engine = new WorkoutEngine();
+import { useState, useCallback } from 'react'
+import './App.css'
+import type { Workout, GeneratedTimeBlock } from './lib/WorkoutEngine'
 
 const EQUIPMENT_OPTIONS = [
   'Pull Up Bar',
   'Barbell',
+  'Weights',
   'Dumbbell',
   'Kettlebell',
   'Medicine Ball',
   'Plyo Box',
   'Jump Rope',
   'Rings',
-  'Rower'
-];
+  'Rower',
+  'Rope',
+  'GHD Machine',
+] as const
 
-export default function App() {
-  const [selectedEquipment, setSelectedEquipment] = useState<string[]>([]);
-  const [result, setResult] = useState<Workout[] | GeneratedTimeBlock | null>(null);
+type WorkoutResult = Workout[] | GeneratedTimeBlock | null
 
-  const toggleEquipment = (eq: string) => {
-    setSelectedEquipment(prev =>
-      prev.includes(eq) ? prev.filter(e => e !== eq) : [...prev, eq]
-    );
-  };
+function App() {
+  const [selectedEquipment, setSelectedEquipment] = useState<string[]>([])
+  const [result, setResult] = useState<WorkoutResult>(null)
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = useCallback(() => {
+    if (!result) return
+
+    let text = ''
+    if (Array.isArray(result) && result.length > 0) {
+      const wod = result[0]
+      text = `${wod.name} (${wod.type})\n`
+      wod.default_movements.forEach((m, i) => {
+        text += `  ${i + 1}. ${typeof m.reps === 'string' ? m.reps : `${m.reps} reps`}\n`
+      })
+    } else if (!Array.isArray(result)) {
+      text = `${result.durationMinutes} Min ${result.type}\n`
+      result.movements.forEach((m, i) => {
+        text += `  ${i + 1}. ${m.name} — ${m.reps} reps\n`
+      })
+    }
+
+    navigator.clipboard.writeText(text.trim()).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }, [result])
+
+  const toggleEquipment = (equip: string) => {
+    setSelectedEquipment((prev) =>
+      prev.includes(equip)
+        ? prev.filter((e) => e !== equip)
+        : [...prev, equip]
+    )
+  }
+
+  const clearEquipment = () => {
+    setSelectedEquipment([])
+  }
 
   const handleGenerate = async () => {
+    setIsGenerating(true)
     try {
-      const wods = await engine.getMatchedWODs(selectedEquipment);
+      const { WorkoutEngine } = await import('./lib/WorkoutEngine')
+      const engine = new WorkoutEngine()
+
+      const wods = await engine.getMatchedWODs(selectedEquipment)
       if (wods.length > 0) {
-        const randomWod = wods[Math.floor(Math.random() * wods.length)];
-        setResult([randomWod]);
+        const randomWod = wods[Math.floor(Math.random() * wods.length)]
+        setResult([randomWod])
       } else {
-        const generated = await engine.generateSmartWorkout(15, selectedEquipment);
-        setResult(generated);
+        const generated = await engine.generateSmartWorkout(15, selectedEquipment)
+        setResult(generated)
       }
-    } catch (e) {
-      console.error(e);
+    } catch (err) {
+      console.error('Failed to generate workout:', err)
+    } finally {
+      setIsGenerating(false)
     }
-  };
+  }
 
-  const handleCopy = () => {
-    if (!result) return;
-
-    let textToCopy = '';
-    if (Array.isArray(result) && result.length > 0) {
-      textToCopy = `Workout: ${result[0].name}\nType: ${result[0].type}\n`;
-      result[0].default_movements.forEach(m => {
-        textToCopy += `- ID ${m.exercise_id}: ${m.reps} reps\n`;
-      });
-    } else if (!Array.isArray(result) && result) {
-      textToCopy = `Smart Workout: ${result.durationMinutes} Min ${result.type}\n`;
-      result.movements.forEach((m: any) => {
-        textToCopy += `- ID ${m.exercise_id}: ${m.reps} reps\n`;
-      });
-    }
-
-    navigator.clipboard.writeText(textToCopy);
-    alert('Workout copied to clipboard!');
-  };
+  const isNoEquipment = selectedEquipment.length === 0
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 sm:p-8 font-sans">
-      <div className="max-w-3xl mx-auto bg-white rounded-xl shadow-sm p-4 sm:p-6">
-        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-4 sm:mb-6">Project WOW</h1>
+    <div className="min-h-screen p-4 sm:p-6 lg:p-8">
+      <div className="noise-overlay" aria-hidden="true" />
 
-        <div className="mb-6 sm:mb-8">
-          <h2 className="text-base sm:text-lg font-semibold text-gray-700 mb-3">Available Equipment</h2>
+      <div className="max-w-2xl mx-auto">
+        {/* Header */}
+        <header className="mb-10 pt-4">
+          <div className="flex items-baseline gap-3">
+            <h1
+              className="text-5xl sm:text-6xl tracking-tight"
+              style={{ fontFamily: 'var(--font-display)' }}
+            >
+              WOW
+            </h1>
+            <span
+              className="text-sm tracking-widest uppercase"
+              style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}
+            >
+              Workout of the Week
+            </span>
+          </div>
+          <div
+            className="mt-2 h-px"
+            style={{ background: 'linear-gradient(90deg, var(--color-accent), transparent 60%)' }}
+          />
+        </header>
+
+        {/* Equipment Section */}
+        <section className="mb-8">
+          <h2
+            className="text-xs tracking-widest uppercase mb-4"
+            style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}
+          >
+            Select Your Equipment
+          </h2>
+
           <div className="flex flex-wrap gap-2" role="group" aria-label="Equipment Options">
             <button
-              onClick={() => setSelectedEquipment([])}
-              className={`chip ${selectedEquipment.length === 0 ? 'chip-active' : 'chip-inactive'}`}
+              onClick={clearEquipment}
+              className={`chip ${isNoEquipment ? 'chip-active' : 'chip-inactive'}`}
             >
+              <span aria-hidden="true">{isNoEquipment ? '◆' : '◇'}</span>
               No Equipment
             </button>
-            {EQUIPMENT_OPTIONS.map(eq => (
-              <button
-                key={eq}
-                onClick={() => toggleEquipment(eq)}
-                className={`chip ${selectedEquipment.includes(eq) ? 'chip-active' : 'chip-inactive'}`}
-              >
-                {eq}
-              </button>
-            ))}
-          </div>
-        </div>
 
-        <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 mb-8">
+            {EQUIPMENT_OPTIONS.map((equip) => {
+              const isActive = selectedEquipment.includes(equip)
+              return (
+                <button
+                  key={equip}
+                  onClick={() => toggleEquipment(equip)}
+                  className={`chip ${isActive ? 'chip-active' : 'chip-inactive'}`}
+                >
+                  <span aria-hidden="true">{isActive ? '◆' : '◇'}</span>
+                  {equip}
+                </button>
+              )
+            })}
+          </div>
+        </section>
+
+        <div className="section-divider mb-8" />
+
+        {/* Actions */}
+        <section className="mb-8 flex flex-wrap items-center gap-3">
           <button
             onClick={handleGenerate}
-            className="btn btn-primary flex-1 py-3 text-base sm:text-lg"
+            disabled={isGenerating}
+            className="btn-generate"
           >
-            Generate Workout
+            {isGenerating ? 'Generating...' : 'Generate Workout'}
           </button>
+
           {result && (
-            <button
-              onClick={handleGenerate}
-              className="btn border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 flex-1 py-3 text-base sm:text-lg"
-            >
-              Shuffle
-            </button>
-          )}
-        </div>
-
-        {result && (
-          <div className="bg-gray-100 rounded-lg p-4 sm:p-6">
-            <div className="flex justify-between flex-wrap items-center mb-4 gap-2">
-              <h2 className="text-lg sm:text-xl font-bold text-gray-800">Results</h2>
-              <button onClick={handleCopy} className="text-xs sm:text-sm bg-gray-200 hover:bg-gray-300 text-gray-700 px-3 py-1 sm:px-4 sm:py-2 rounded font-medium transition-colors">
-                Copy to Clipboard
+            <>
+              <button
+                onClick={handleGenerate}
+                disabled={isGenerating}
+                className="chip chip-inactive hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+                style={{ padding: '0.875rem 1.5rem' }}
+              >
+                ↻ Shuffle
               </button>
-            </div>
+              <button
+                onClick={handleCopy}
+                className="chip chip-inactive hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+                style={{ padding: '0.875rem 1.5rem' }}
+              >
+                {copied ? '✓ Copied' : '⎘ Copy'}
+              </button>
+            </>
+          )}
+        </section>
 
-            {Array.isArray(result) ? (
-              <div>
-                <h3 className="font-semibold text-gray-700 mb-3 sm:mb-4 text-lg sm:text-xl">Classic WOD Match</h3>
-                {result.length > 0 ? (
-                  <ul className="space-y-4">
-                    {result.map(wod => (
-                      <li key={wod.id} className="bg-white p-4 sm:p-6 rounded-lg shadow-sm border-l-4 border-blue-500">
-                        <div className="flex flex-col sm:flex-row justify-between sm:items-center mb-2 gap-2">
-                          <div className="font-bold text-xl sm:text-2xl text-gray-900">{wod.name}</div>
-                          <span className="self-start sm:self-auto bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full uppercase tracking-wide font-semibold">{wod.type}</span>
-                        </div>
-                        <ul className="space-y-2 mt-4">
-                          {wod.default_movements.map((m, i) => (
-                            <li key={i} className="flex justify-between text-gray-700 border-b pb-1 last:border-0 text-sm sm:text-base">
-                              <span>Exercise ID: {m.exercise_id}</span>
-                              <span className="font-medium">{m.reps} reps</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-              </div>
-            ) : (
-              <div>
-                <h3 className="font-semibold text-gray-700 mb-3 sm:mb-4 text-lg sm:text-xl">Generated Smart Workout</h3>
-                <div className="bg-white p-4 sm:p-6 rounded-lg shadow-sm border-l-4 border-green-500">
-                  <div className="flex justify-between items-center mb-4">
-                    <span className="text-xl sm:text-2xl font-bold">{result.durationMinutes} Min {result.type}</span>
-                  </div>
-                  <ul className="space-y-2">
-                    {result.movements.map((m: any, i: number) => (
-                      <li key={i} className="flex justify-between text-gray-700 border-b pb-1 last:border-0 text-sm sm:text-base">
-                        <span>Exercise ID: {m.exercise_id}</span>
-                        <span className="font-medium">{m.reps} reps</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+        {/* Results */}
+        <section>
+          {!result && !isGenerating && (
+            <div className="result-display">
+              <p
+                className="text-sm tracking-wide"
+                style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}
+              >
+                Select equipment & hit generate
+              </p>
+            </div>
+          )}
+
+          {isGenerating && (
+            <div className="result-display">
+              <div
+                className="w-5 h-5 border-2 rounded-full animate-spin"
+                style={{ borderColor: 'var(--color-border-subtle)', borderTopColor: 'var(--color-accent)' }}
+              />
+            </div>
+          )}
+
+          {result && !isGenerating && (
+            <div className="animate-fade-in-up">
+              {Array.isArray(result) && result.length > 0 ? (
+                <ClassicWODCard wod={result[0]} />
+              ) : !Array.isArray(result) ? (
+                <SmartWorkoutCard workout={result} />
+              ) : null}
+            </div>
+          )}
+        </section>
+
+        {/* Footer */}
+        <footer className="mt-16 mb-8 text-center">
+          <p
+            className="text-xs"
+            style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}
+          >
+            Project WOW — Built for athletes who hate rest days
+          </p>
+        </footer>
       </div>
     </div>
-  );
+  )
 }
+
+function ClassicWODCard({ wod }: { wod: Workout }) {
+  return (
+    <div className="workout-card rounded-lg p-6">
+      <div className="flex items-start justify-between mb-4">
+        <div>
+          <span
+            className="text-xs tracking-widest uppercase"
+            style={{ color: 'var(--color-accent)', fontFamily: 'var(--font-mono)' }}
+          >
+            Classic WOD
+          </span>
+          <h3
+            className="text-3xl mt-1"
+            style={{ fontFamily: 'var(--font-display)' }}
+          >
+            {wod.name}
+          </h3>
+        </div>
+        <span
+          className="text-xs px-2.5 py-1 rounded"
+          style={{
+            background: 'var(--color-surface-elevated)',
+            color: 'var(--color-text-secondary)',
+            fontFamily: 'var(--font-mono)',
+          }}
+        >
+          {wod.type}
+        </span>
+      </div>
+
+      <div className="space-y-2">
+        {wod.default_movements.map((m, i) => (
+          <div
+            key={i}
+            className="flex items-center justify-between py-2 px-3 rounded"
+            style={{ background: 'var(--color-surface-elevated)' }}
+          >
+            <span className="text-sm" style={{ color: 'var(--color-text-primary)' }}>
+              Movement #{i + 1}
+            </span>
+            <span
+              className="text-sm"
+              style={{ color: 'var(--color-accent)', fontFamily: 'var(--font-mono)' }}
+            >
+              {typeof m.reps === 'string' ? m.reps : `${m.reps} reps`}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function SmartWorkoutCard({ workout }: { workout: GeneratedTimeBlock }) {
+  return (
+    <div className="workout-card rounded-lg p-6">
+      <div className="flex items-start justify-between mb-4">
+        <div>
+          <span
+            className="text-xs tracking-widest uppercase"
+            style={{ color: 'var(--color-accent)', fontFamily: 'var(--font-mono)' }}
+          >
+            Generated Smart Workout
+          </span>
+          <h3
+            className="text-3xl mt-1"
+            style={{ fontFamily: 'var(--font-display)' }}
+          >
+            {workout.durationMinutes} Min {workout.type}
+          </h3>
+        </div>
+        <span
+          className="text-xs px-2.5 py-1 rounded"
+          style={{
+            background: 'var(--color-surface-elevated)',
+            color: 'var(--color-text-secondary)',
+            fontFamily: 'var(--font-mono)',
+          }}
+        >
+          {workout.type}
+        </span>
+      </div>
+
+      <div className="space-y-2">
+        {workout.movements.map((m, i) => (
+          <div
+            key={i}
+            className="flex items-center justify-between py-2 px-3 rounded"
+            style={{ background: 'var(--color-surface-elevated)' }}
+          >
+            <span className="text-sm" style={{ color: 'var(--color-text-primary)' }}>
+              {m.name}
+            </span>
+            <span
+              className="text-sm"
+              style={{ color: 'var(--color-accent)', fontFamily: 'var(--font-mono)' }}
+            >
+              {m.reps} reps
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+export default App

@@ -1,76 +1,164 @@
-import { render, screen, fireEvent } from '@testing-library/react';
-import { describe, it, expect, vi } from 'vitest';
-import App from './App';
+import { describe, it, expect, vi } from 'vitest'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import App from './App'
 
-describe('App Dashboard', () => {
-    it('renders the dashboard, clicks a few equipment toggles, and tracks state accurately', () => {
-        render(<App />);
+describe('Dashboard UI State', () => {
+  it('renders the dashboard with equipment toggles and generate button', () => {
+    render(<App />)
 
-        // By default, no equipment should be selected
-        const noEqBtn = screen.getByText('No Equipment');
-        expect(noEqBtn).toHaveClass('chip-active');
+    expect(screen.getByText('WOW')).toBeInTheDocument()
+    expect(screen.getByText('No Equipment')).toBeInTheDocument()
+    expect(screen.getByText('Dumbbell')).toBeInTheDocument()
+    expect(screen.getByText('Kettlebell')).toBeInTheDocument()
+    expect(screen.getByText('Barbell')).toBeInTheDocument()
+    expect(screen.getByText('Generate Workout')).toBeInTheDocument()
+  })
 
-        // Click Dumbbell
-        const dumbbellBtn = screen.getByText('Dumbbell');
-        expect(dumbbellBtn).toHaveClass('chip-inactive');
+  it('shows No Equipment as active by default', () => {
+    render(<App />)
 
-        fireEvent.click(dumbbellBtn);
+    const noEquipBtn = screen.getByText('No Equipment').closest('button')!
+    expect(noEquipBtn).toHaveClass('chip-active')
+  })
 
-        // Dumbbell should now be active, No Equipment should be inactive because selectedEquipment length > 0
-        expect(dumbbellBtn).toHaveClass('chip-active');
-        expect(noEqBtn).toHaveClass('chip-inactive');
+  it('toggles equipment chips on click and deactivates No Equipment', () => {
+    render(<App />)
 
-        // Click Kettlebell
-        const kettlebellBtn = screen.getByText('Kettlebell');
-        fireEvent.click(kettlebellBtn);
-        expect(kettlebellBtn).toHaveClass('chip-active');
+    const noEquipBtn = screen.getByText('No Equipment').closest('button')!
+    const dumbbellBtn = screen.getByText('Dumbbell').closest('button')!
 
-        // De-select Dumbbell
-        fireEvent.click(dumbbellBtn);
-        expect(dumbbellBtn).toHaveClass('chip-inactive');
+    // Initially: No Equipment is active, Dumbbell is inactive
+    expect(noEquipBtn).toHaveClass('chip-active')
+    expect(dumbbellBtn).toHaveClass('chip-inactive')
 
-        // Internal state is functionally tested by checking the classes applied based on state
-    });
+    // Click Dumbbell — should become active, No Equipment becomes inactive
+    fireEvent.click(dumbbellBtn)
+    expect(dumbbellBtn).toHaveClass('chip-active')
+    expect(noEquipBtn).toHaveClass('chip-inactive')
+  })
 
-    it('mocks a Generate click, displays a workout, then tests Shuffle', async () => {
-        // Mock the WorkoutEngine dependency
-        vi.mock('./lib/WorkoutEngine', () => {
-            return {
-                WorkoutEngine: vi.fn().mockImplementation(() => {
-                    return {
-                        getMatchedWODs: vi.fn().mockResolvedValue([]),
-                        generateSmartWorkout: vi.fn().mockResolvedValue({
-                            durationMinutes: 15,
-                            type: 'AMRAP',
-                            movements: [
-                                { exercise_id: 'mock-1', reps: 10 }
-                            ]
-                        })
-                    };
-                })
-            };
-        });
+  it('can select multiple equipment items', () => {
+    render(<App />)
 
-        render(<App />);
+    const dumbbellBtn = screen.getByText('Dumbbell').closest('button')!
+    const kettlebellBtn = screen.getByText('Kettlebell').closest('button')!
 
-        // Click generate
-        const generateBtn = screen.getByText('Generate Workout');
-        fireEvent.click(generateBtn);
+    fireEvent.click(dumbbellBtn)
+    fireEvent.click(kettlebellBtn)
 
-        // Wait for results
-        const resultHeading = await screen.findByText('Generated Smart Workout');
-        expect(resultHeading).toBeInTheDocument();
-        expect(screen.getByText('15 Min AMRAP')).toBeInTheDocument();
-        expect(screen.getByText('Exercise ID: mock-1')).toBeInTheDocument();
+    expect(dumbbellBtn).toHaveClass('chip-active')
+    expect(kettlebellBtn).toHaveClass('chip-active')
+  })
 
-        // Check if Shuffle button appeared
-        const shuffleBtn = screen.getByText('Shuffle');
-        expect(shuffleBtn).toBeInTheDocument();
+  it('deselects equipment on second click', () => {
+    render(<App />)
 
-        // Click Shuffle
-        fireEvent.click(shuffleBtn);
+    const dumbbellBtn = screen.getByText('Dumbbell').closest('button')!
 
-        // Wait for the re-render after shuffle to prevent "act" warning
-        await screen.findByText('Generated Smart Workout');
-    });
-});
+    // Click to select
+    fireEvent.click(dumbbellBtn)
+    expect(dumbbellBtn).toHaveClass('chip-active')
+
+    // Click again to deselect
+    fireEvent.click(dumbbellBtn)
+    expect(dumbbellBtn).toHaveClass('chip-inactive')
+
+    // No Equipment should return to active
+    const noEquipBtn = screen.getByText('No Equipment').closest('button')!
+    expect(noEquipBtn).toHaveClass('chip-active')
+  })
+
+  it('clicking No Equipment clears all equipment selections', () => {
+    render(<App />)
+
+    const noEquipBtn = screen.getByText('No Equipment').closest('button')!
+    const dumbbellBtn = screen.getByText('Dumbbell').closest('button')!
+    const kettlebellBtn = screen.getByText('Kettlebell').closest('button')!
+
+    // Select some equipment
+    fireEvent.click(dumbbellBtn)
+    fireEvent.click(kettlebellBtn)
+    expect(dumbbellBtn).toHaveClass('chip-active')
+    expect(kettlebellBtn).toHaveClass('chip-active')
+
+    // Click No Equipment to clear all
+    fireEvent.click(noEquipBtn)
+    expect(noEquipBtn).toHaveClass('chip-active')
+    expect(dumbbellBtn).toHaveClass('chip-inactive')
+    expect(kettlebellBtn).toHaveClass('chip-inactive')
+  })
+})
+
+describe('Integration: Generate & Shuffle', () => {
+  it('renders a generated smart workout when Generate is clicked', async () => {
+    // Mock the WorkoutEngine module for component isolation
+    vi.doMock('./lib/WorkoutEngine', () => ({
+      WorkoutEngine: vi.fn().mockImplementation(() => ({
+        getMatchedWODs: vi.fn().mockResolvedValue([]),
+        generateSmartWorkout: vi.fn().mockResolvedValue({
+          durationMinutes: 15,
+          type: 'EMOM',
+          movements: [
+            { exercise_id: 'mock-1', name: 'Push Up', reps: 15 },
+            { exercise_id: 'mock-2', name: 'Pull Up', reps: 25 },
+            { exercise_id: 'mock-3', name: 'Air Squat', reps: 10 },
+          ],
+        }),
+      })),
+    }))
+
+    // Re-import App to pick up the mock
+    const { default: MockedApp } = await import('./App')
+    render(<MockedApp />)
+
+    fireEvent.click(screen.getByText('Generate Workout'))
+
+    // Wait for async generation to complete
+    await waitFor(() => {
+      expect(screen.getByText('Generated Smart Workout')).toBeInTheDocument()
+    })
+
+    expect(screen.getByText('15 Min EMOM')).toBeInTheDocument()
+    expect(screen.getByText('Push Up')).toBeInTheDocument()
+    expect(screen.getByText('Pull Up')).toBeInTheDocument()
+    expect(screen.getByText('Air Squat')).toBeInTheDocument()
+
+    // Shuffle button should appear after generation
+    expect(screen.getByText('↻ Shuffle')).toBeInTheDocument()
+
+    vi.doUnmock('./lib/WorkoutEngine')
+  })
+
+  it('renders a classic WOD when matched WODs are found', async () => {
+    vi.doMock('./lib/WorkoutEngine', () => ({
+      WorkoutEngine: vi.fn().mockImplementation(() => ({
+        getMatchedWODs: vi.fn().mockResolvedValue([
+          {
+            id: 'wod-1',
+            name: 'Cindy',
+            type: 'AMRAP',
+            default_movements: [
+              { exercise_id: 'ex-1', reps: 5 },
+              { exercise_id: 'ex-2', reps: 10 },
+              { exercise_id: 'ex-3', reps: 15 },
+            ],
+          },
+        ]),
+        generateSmartWorkout: vi.fn(),
+      })),
+    }))
+
+    const { default: MockedApp } = await import('./App')
+    render(<MockedApp />)
+
+    fireEvent.click(screen.getByText('Generate Workout'))
+
+    await waitFor(() => {
+      expect(screen.getByText('Classic WOD')).toBeInTheDocument()
+    })
+
+    expect(screen.getByText('Cindy')).toBeInTheDocument()
+
+    vi.doUnmock('./lib/WorkoutEngine')
+  })
+})

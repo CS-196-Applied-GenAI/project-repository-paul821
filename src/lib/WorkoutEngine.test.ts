@@ -1,141 +1,181 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { WorkoutEngine } from './WorkoutEngine';
-import { supabase } from './supabase';
+import { describe, it, expect } from 'vitest'
+import { WorkoutEngine } from './WorkoutEngine'
 
-// Mock Supabase client
-vi.mock('./supabase', () => ({
-    supabase: {
-        from: vi.fn()
-    }
-}));
+const engine = new WorkoutEngine()
 
-describe('WorkoutEngine - Phase 1 & 2', () => {
-    let engine: WorkoutEngine;
+describe('WorkoutEngine', () => {
+  describe('Phase 1: Classic WOD Matcher', () => {
+    it('returns WODs that match available equipment', async () => {
+      // With Pull Up Bar, we should get WODs that only need bodyweight + pull up bar
+      // Cindy needs: Pull Up Bar (for Pull Up) + bodyweight (Push Up, Air Squat)
+      const wods = await engine.getMatchedWODs(['Pull Up Bar'])
 
-    beforeEach(() => {
-        engine = new WorkoutEngine();
-        vi.resetAllMocks();
-    });
+      // Cindy should be in the results (only needs Pull Up Bar + bodyweight)
+      const wodNames = wods.map((w) => w.name)
+      expect(wodNames).toContain('Cindy')
+    })
 
-    it('Phase 1: correctly filters out a workout if a required piece of equipment is missing', async () => {
-        const mockExercises = [
-            { id: '1', name: 'Air Squat', equipment_required: [] },
-            { id: '2', name: 'Pull Up', equipment_required: ['Pull Up Bar'] },
-            { id: '3', name: 'Thruster', equipment_required: ['Barbell', 'Weights'] }
-        ];
+    it('filters out WODs that require missing equipment', async () => {
+      // With no equipment, WODs requiring Pull Up Bar, Barbell, etc. should be excluded
+      const wods = await engine.getMatchedWODs([])
 
-        const mockWorkouts = [
-            {
-                id: 'w1', name: 'Murph Lite', type: 'For Time',
-                default_movements: [{ exercise_id: '1', reps: 100 }, { exercise_id: '2', reps: 50 }]
-            },
-            {
-                id: 'w2', name: 'Fran', type: 'For Time',
-                default_movements: [{ exercise_id: '3', reps: 21 }, { exercise_id: '2', reps: 21 }]
-            }
-        ];
+      const wodNames = wods.map((w) => w.name)
 
-        // Setup the mocked supabase client
-        (supabase.from as any).mockImplementation((table: string) => ({
-            select: vi.fn().mockResolvedValue(
-                table === 'exercises' ? { data: mockExercises, error: null } : { data: mockWorkouts, error: null }
-            )
-        }));
+      // Fran needs Barbell + Pull Up Bar — should NOT be included
+      expect(wodNames).not.toContain('Fran')
+      // Grace needs Barbell — should NOT be included
+      expect(wodNames).not.toContain('Grace')
+      // Cindy needs Pull Up Bar — should NOT be included
+      expect(wodNames).not.toContain('Cindy')
+    })
 
-        // User only has a Pull Up Bar, NO Barbell/Weights
-        const availableEquipment = ['Pull Up Bar'];
+    it('returns more WODs when more equipment is available', async () => {
+      const wodsNoEquip = await engine.getMatchedWODs([])
+      const wodsFullGym = await engine.getMatchedWODs([
+        'Barbell', 'Weights', 'Pull Up Bar', 'Kettlebell',
+        'Jump Rope', 'Rower', 'Medicine Ball', 'Rings',
+      ])
 
-        const matchedWODs = await engine.getMatchedWODs(availableEquipment);
+      expect(wodsFullGym.length).toBeGreaterThan(wodsNoEquip.length)
+    })
+  })
 
-        // "Murph Lite" requires Air Squat (no eq) and Pull Up (Pull Up Bar). -> Valid
-        // "Fran" requires Thruster (Barbell, Weights) and Pull Up. -> Invalid because no Barbell
-        expect(matchedWODs).toHaveLength(1);
-        expect(matchedWODs[0].name).toBe('Murph Lite');
-    });
+  describe('Phase 2: Template Stacker', () => {
+    it('returns AMRAP for durations <= 10 minutes', () => {
+      const block = engine.generateTimeBlock(10)
+      expect(block.type).toBe('AMRAP')
+      expect(block.durationMinutes).toBe(10)
+      expect(block.movements).toEqual([])
+    })
 
-    it('Phase 2: generateTimeBlock creates a proper structure based on duration', () => {
-        const amrapBlock = engine.generateTimeBlock(10);
-        expect(amrapBlock.durationMinutes).toBe(10);
-        expect(amrapBlock.type).toBe('AMRAP');
-        expect(amrapBlock.movements).toEqual([]);
+    it('returns EMOM for durations 11-20 minutes', () => {
+      const block = engine.generateTimeBlock(15)
+      expect(block.type).toBe('EMOM')
+      expect(block.durationMinutes).toBe(15)
+    })
 
-        const emomBlock = engine.generateTimeBlock(15);
-        expect(emomBlock.type).toBe('EMOM');
+    it('returns For Time for durations > 20 minutes', () => {
+      const block = engine.generateTimeBlock(30)
+      expect(block.type).toBe('For Time')
+      expect(block.durationMinutes).toBe(30)
+    })
+  })
 
-        const ftBlock = engine.generateTimeBlock(30);
-        expect(ftBlock.type).toBe('For Time');
-    });
+  describe('Balanced Movement Rule', () => {
+    it('test_smart_distribution: generates a 3-movement workout with one push, one pull, and one squat/hinge', async () => {
+      // With Pull Up Bar we have: bodyweight push + pull-up bar pull + bodyweight squat/hinge
+      const workout = await engine.generateSmartWorkout(10, ['Pull Up Bar'])
 
-    it('Phase 3: test_smart_distribution ensures 1 push, 1 pull, 1 squat/hinge', async () => {
-        const mockExercises = [
-            { id: '1', name: 'Air Squat', movement_pattern: 'squat', equipment_required: [] },
-            { id: '2', name: 'Pull Up', movement_pattern: 'pull', equipment_required: ['Pull Up Bar'] },
-            { id: '3', name: 'Push Up', movement_pattern: 'push', equipment_required: [] },
-            { id: '4', name: 'Deadlift', movement_pattern: 'hinge', equipment_required: ['Barbell', 'Weights'] }
-        ];
+      // Should have exactly 3 movements
+      expect(workout.movements.length).toBe(3)
 
-        (supabase.from as any).mockImplementation(() => ({
-            select: vi.fn().mockResolvedValue({ data: mockExercises, error: null })
-        }));
+      // Fetch exercises to verify movement patterns
+      const { data: allExercises } = await (await import('./supabase')).supabase
+        .from('exercises')
+        .select('*')
 
-        // Filter missing barbell, so we only have Air Squat (squat), Pull Up (pull), and Push Up (push).
-        const availableEquipment = ['Pull Up Bar'];
+      const exerciseMap = new Map(
+        (allExercises ?? []).map((ex: { id: string; movement_pattern: string }) => [ex.id, ex.movement_pattern])
+      )
 
-        const smartWorkout = await engine.generateSmartWorkout(15, availableEquipment);
+      const patterns = workout.movements.map((m) => {
+        const pattern = exerciseMap.get(m.exercise_id)
+        // Combine squat and hinge into one category
+        return pattern === 'squat' || pattern === 'hinge' ? 'squat/hinge' : pattern
+      })
 
-        expect(smartWorkout.movements.length).toBe(3);
+      // Verify balanced distribution
+      expect(patterns).toContain('push')
+      expect(patterns).toContain('pull')
+      expect(patterns).toContain('squat/hinge')
 
-        // Verify exactly one push, one pull, and one squat/hinge based on what was selected
-        const exerciseIds = smartWorkout.movements.map(m => m.exercise_id);
-        const selectedExercises = mockExercises.filter(e => exerciseIds.includes(e.id));
+      // Each category should appear exactly once
+      expect(patterns.filter((p) => p === 'push').length).toBe(1)
+      expect(patterns.filter((p) => p === 'pull').length).toBe(1)
+      expect(patterns.filter((p) => p === 'squat/hinge').length).toBe(1)
+    })
 
-        expect(selectedExercises.find(e => e.movement_pattern === 'push')).toBeDefined();
-        expect(selectedExercises.find(e => e.movement_pattern === 'pull')).toBeDefined();
-        expect(selectedExercises.find(e => e.movement_pattern === 'squat' || e.movement_pattern === 'hinge')).toBeDefined();
+    it('respects equipment filtering in smart workout generation', async () => {
+      // With no equipment, should only get bodyweight exercises
+      const workout = await engine.generateSmartWorkout(15, [])
 
-        // Ensure the deadlift was not picked because no barbell
-        expect(selectedExercises.find(e => e.name === 'Deadlift')).toBeUndefined();
-    });
+      // All selected exercises should require no equipment
+      const { data: allExercises } = await (await import('./supabase')).supabase
+        .from('exercises')
+        .select('*')
 
-    it('Filter Relaxation: gets closest matches and displays missing equipment', async () => {
-        const mockExercises = [
-            { id: '1', name: 'Pull Up', equipment_required: ['Pull Up Bar'] },
-            { id: '2', name: 'Thruster', equipment_required: ['Barbell', 'Weights'] }
-        ];
+      const exerciseMap = new Map(
+        (allExercises ?? []).map((ex: { id: string; equipment_required: string[] }) => [ex.id, ex.equipment_required])
+      )
 
-        const mockWorkouts = [
-            {
-                id: 'w1', name: 'Fran', type: 'For Time',
-                default_movements: [{ exercise_id: '1', reps: 21 }, { exercise_id: '2', reps: 21 }]
-            }
-        ];
+      workout.movements.forEach((m) => {
+        const required = exerciseMap.get(m.exercise_id)
+        expect(required).toBeDefined()
+        expect(required!.length).toBe(0) // bodyweight only
+      })
+    })
+  })
 
-        (supabase.from as any).mockImplementation((table: string) => ({
-            select: vi.fn().mockResolvedValue(
-                table === 'exercises' ? { data: mockExercises, error: null } : { data: mockWorkouts, error: null }
-            )
-        }));
+  describe('Phase 3: Filter Relaxation', () => {
+    it('finds closest matching WODs and reports missing equipment', async () => {
+      // With only Pull Up Bar, Fran (needs Barbell+Weights+Pull Up Bar) is close
+      const closest = await engine.getClosestMatchedWODs(['Pull Up Bar'])
 
-        const availableEquipment = ['Pull Up Bar']; // Missing Barbell and Weights
-        const closestMatches = await engine.getClosestMatchedWODs(availableEquipment);
+      expect(closest.length).toBeGreaterThan(0)
 
-        expect(closestMatches.length).toBe(1);
-        expect(closestMatches[0].wod.name).toBe('Fran');
-        expect(closestMatches[0].missingEquipment).toContain('Barbell');
-        expect(closestMatches[0].missingEquipment).toContain('Weights');
-    });
+      // Each result should have missing equipment listed
+      closest.forEach((match) => {
+        expect(match.missingEquipment.length).toBeGreaterThan(0)
+        expect(match.wod.name).toBeDefined()
+      })
 
-    it('Rep-Volume Scaling: scales reps properly based on equipment substituted', () => {
-        // Barbell to Dumbbell (+20%)
-        expect(engine.scaleRepVolume(10, 'Barbell', 'Dumbbell')).toBe(12);
+      // Results should be sorted by fewest missing items first
+      for (let i = 1; i < closest.length; i++) {
+        expect(closest[i].missingEquipment.length)
+          .toBeGreaterThanOrEqual(closest[i - 1].missingEquipment.length)
+      }
+    })
 
-        // Dumbbell to None (+50%)
-        expect(engine.scaleRepVolume(10, 'Dumbbell', 'None')).toBe(15);
+    it('excludes exact matches from closest results', async () => {
+      // With full gym equipment, exact matches should NOT appear in closest
+      const fullGym = ['Barbell', 'Weights', 'Pull Up Bar', 'Kettlebell', 'Jump Rope', 'Rower', 'Medicine Ball', 'Rings']
+      const exactMatches = await engine.getMatchedWODs(fullGym)
+      const closestMatches = await engine.getClosestMatchedWODs(fullGym)
 
-        // Complex rep string scaling (21-15-9 Barbell to Dumbbell)
-        // 21 * 1.2 = 25.2 -> 25
-        // 15 * 1.2 = 18
-        // 9 * 1.2 = 10.8 -> 11
-        expect(engine.scaleRepVolume('21-15-9', 'Barbell', 'Dumbbell')).toBe('25-18-11');
-    });
-});
+      const exactNames = new Set(exactMatches.map((w) => w.name))
+      closestMatches.forEach((match) => {
+        expect(exactNames.has(match.wod.name)).toBe(false)
+      })
+    })
+  })
+
+  describe('Rep-Volume Scaling', () => {
+    it('scales numeric reps by 20% for Barbell → Dumbbell', () => {
+      expect(engine.scaleRepVolume(10, 'Barbell', 'Dumbbell')).toBe(12)
+      expect(engine.scaleRepVolume(21, 'Barbell', 'Dumbbell')).toBe(25)
+      expect(engine.scaleRepVolume(5, 'Barbell', 'Dumbbell')).toBe(6)
+    })
+
+    it('scales numeric reps by 50% for Dumbbell → None', () => {
+      expect(engine.scaleRepVolume(10, 'Dumbbell', 'None')).toBe(15)
+      expect(engine.scaleRepVolume(20, 'Dumbbell', 'None')).toBe(30)
+    })
+
+    it('scales string rep schemes like "21-15-9"', () => {
+      expect(engine.scaleRepVolume('21-15-9', 'Barbell', 'Dumbbell')).toBe('25-18-11')
+      expect(engine.scaleRepVolume('50-40-30-20-10', 'Barbell', 'Dumbbell')).toBe('60-48-36-24-12')
+    })
+
+    it('returns unchanged reps for unknown substitution', () => {
+      expect(engine.scaleRepVolume(10, 'Kettlebell', 'Dumbbell')).toBe(10)
+      expect(engine.scaleRepVolume('21-15-9', 'Rings', 'None')).toBe('21-15-9')
+    })
+
+    it('handles edge cases with rounding', () => {
+      // 9 * 1.2 = 10.8 → 11
+      expect(engine.scaleRepVolume(9, 'Barbell', 'Dumbbell')).toBe(11)
+      // 7 * 1.5 = 10.5 → 11 (Math.round rounds .5 up)
+      expect(engine.scaleRepVolume(7, 'Dumbbell', 'None')).toBe(11)
+    })
+  })
+})

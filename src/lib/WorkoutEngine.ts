@@ -1,223 +1,244 @@
-import { supabase } from './supabase';
-import { seededExercises, seededWorkouts } from '../../scripts/seed';
+import { supabase } from './supabase'
+
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 export interface Exercise {
-    id: string;
-    name: string;
-    movement_pattern: 'push' | 'pull' | 'squat' | 'hinge' | 'core';
-    equipment_required: string[];
-    base_difficulty: number;
+  id: string
+  name: string
+  movement_pattern: 'push' | 'pull' | 'squat' | 'hinge' | 'core'
+  equipment_required: string[]
+  base_difficulty: number
 }
 
 export interface WODMovement {
-    exercise_id: string;
-    reps: number | string;
+  exercise_id: string
+  reps: number | string
 }
 
 export interface Workout {
-    id: string;
-    name: string;
-    type: 'AMRAP' | 'For Time' | 'EMOM';
-    default_movements: WODMovement[];
+  id: string
+  name: string
+  type: 'AMRAP' | 'For Time' | 'EMOM'
+  default_movements: WODMovement[]
 }
 
 export interface GeneratedTimeBlock {
-    durationMinutes: number;
-    type: 'AMRAP' | 'EMOM' | 'For Time';
-    movements: any[];
+  durationMinutes: number
+  type: 'AMRAP' | 'EMOM' | 'For Time'
+  movements: Array<{ exercise_id: string; name: string; reps: number }>
 }
 
+export interface ClosestMatch {
+  wod: Workout
+  missingEquipment: string[]
+}
+
+// ─── WorkoutEngine ───────────────────────────────────────────────────────────
+
 export class WorkoutEngine {
-    constructor() { }
+  /**
+   * Filters exercises to those the user can perform with their available equipment.
+   * An exercise is valid if equipment_required is empty (bodyweight) or all
+   * required items are in the user's available equipment list.
+   */
+  private filterExercisesByEquipment(
+    exercises: Exercise[],
+    availableEquipment: string[]
+  ): Exercise[] {
+    return exercises.filter((ex) => {
+      if (ex.equipment_required.length === 0) return true
+      return ex.equipment_required.every((equip) =>
+        availableEquipment.includes(equip)
+      )
+    })
+  }
 
-    /**
-     * Phase 1 (Classic WOD Matcher): Takes 'availableEquipment' and returns classic WODs
-     * from the DB that the user can perform.
-     */
-    async getMatchedWODs(availableEquipment: string[]): Promise<Workout[]> {
-        let exercisesData = null;
-        let workoutsData = null;
+  /**
+   * Phase 1: Classic WOD Matcher
+   * Returns classic WODs from the DB that the user can fully perform
+   * with their available equipment.
+   */
+  async getMatchedWODs(availableEquipment: string[]): Promise<Workout[]> {
+    const { data: exercises, error: exError } = await supabase
+      .from('exercises')
+      .select('*')
 
-        try {
-            const { data, error } = await supabase.from('exercises').select('*');
-            if (error) throw error;
-            exercisesData = data;
-        } catch (e) {
-            console.warn('Falling back to seeded exercises data due to fetch error:', e);
-            exercisesData = seededExercises;
-        }
+    if (exError) throw new Error(`Failed to fetch exercises: ${exError.message}`)
 
-        // Filter to valid exercises
-        const validExercises = (exercisesData as Exercise[]).filter((ex: any) => {
-            if (ex.equipment_required.length === 0) return true;
-            return ex.equipment_required.every(eq => availableEquipment.includes(eq));
-        });
+    const { data: workouts, error: wodError } = await supabase
+      .from('workouts')
+      .select('*')
 
-        const validExerciseIds = new Set(validExercises.map(e => e.id));
+    if (wodError) throw new Error(`Failed to fetch workouts: ${wodError.message}`)
 
-        // 2. Fetch all classic workouts
-        try {
-            const { data, error } = await supabase.from('workouts').select('*');
-            if (error) throw error;
-            workoutsData = data;
-        } catch (e) {
-            console.warn('Falling back to seeded workouts data due to fetch error:', e);
-            workoutsData = seededWorkouts;
-        }
+    // Build set of valid exercise IDs based on equipment
+    const validExerciseIds = new Set(
+      this.filterExercisesByEquipment(exercises as Exercise[], availableEquipment)
+        .map((ex) => ex.id)
+    )
 
-        // 3. Filter WODs where all movements refer to a valid exercise
-        return (workoutsData as Workout[]).filter((wod: any) => {
-            // Check if every movement's exercise is in the valid set
-            return wod.default_movements.every(m => validExerciseIds.has(m.exercise_id));
-        });
+    // Return only workouts where ALL movements use valid exercises
+    return (workouts as Workout[]).filter((wod) =>
+      wod.default_movements.every((m) => validExerciseIds.has(m.exercise_id))
+    )
+  }
+
+  /**
+   * Phase 2: Template Stacker
+   * Creates a workout time block structure based on duration.
+   */
+  generateTimeBlock(durationMinutes: number): GeneratedTimeBlock {
+    let type: 'AMRAP' | 'EMOM' | 'For Time'
+
+    if (durationMinutes <= 10) {
+      type = 'AMRAP'
+    } else if (durationMinutes <= 20) {
+      type = 'EMOM'
+    } else {
+      type = 'For Time'
     }
 
-    /**
-     * Phase 2 (Template Stacker): Takes a 'duration' (minutes) and creates a
-     * workout structure (e.g., a 10-minute AMRAP template).
-     */
-    generateTimeBlock(durationMinutes: number): GeneratedTimeBlock {
-        let type: 'AMRAP' | 'EMOM' | 'For Time' = 'AMRAP';
+    return {
+      durationMinutes,
+      type,
+      movements: [],
+    }
+  }
 
-        if (durationMinutes <= 10) {
-            type = 'AMRAP';
-        } else if (durationMinutes <= 20) {
-            type = 'EMOM';
-        } else {
-            type = 'For Time';
+  /**
+   * Balanced Movement Rule + Smart Workout Generator
+   * Generates a workout with balanced movement distribution:
+   * one push, one pull, and one squat/hinge movement.
+   * All selected exercises must be performable with the user's equipment.
+   */
+  async generateSmartWorkout(
+    durationMinutes: number,
+    availableEquipment: string[]
+  ): Promise<GeneratedTimeBlock> {
+    const block = this.generateTimeBlock(durationMinutes)
+
+    const { data: exercises, error } = await supabase
+      .from('exercises')
+      .select('*')
+
+    if (error) throw new Error(`Failed to fetch exercises: ${error.message}`)
+
+    const validExercises = this.filterExercisesByEquipment(
+      exercises as Exercise[],
+      availableEquipment
+    )
+
+    // Bucket exercises by movement pattern category
+    const pushExercises = validExercises.filter((e) => e.movement_pattern === 'push')
+    const pullExercises = validExercises.filter((e) => e.movement_pattern === 'pull')
+    const squatHingeExercises = validExercises.filter(
+      (e) => e.movement_pattern === 'squat' || e.movement_pattern === 'hinge'
+    )
+
+    // Pick one random exercise from each bucket
+    const pickRandom = (arr: Exercise[]): Exercise | null =>
+      arr.length > 0 ? arr[Math.floor(Math.random() * arr.length)] : null
+
+    const selected = [
+      pickRandom(pushExercises),
+      pickRandom(pullExercises),
+      pickRandom(squatHingeExercises),
+    ].filter((e): e is Exercise => e !== null)
+
+    block.movements = selected.map((ex) => ({
+      exercise_id: ex.id,
+      name: ex.name,
+      reps: ex.base_difficulty * 5,
+    }))
+
+    return block
+  }
+
+  /**
+   * Phase 3: Filter Relaxation
+   * When no classic WOD matches exactly, find the closest matches
+   * and report which equipment is missing.
+   */
+  async getClosestMatchedWODs(
+    availableEquipment: string[]
+  ): Promise<ClosestMatch[]> {
+    const { data: exercises, error: exError } = await supabase
+      .from('exercises')
+      .select('*')
+
+    if (exError) throw new Error(`Failed to fetch exercises: ${exError.message}`)
+
+    const { data: workouts, error: wodError } = await supabase
+      .from('workouts')
+      .select('*')
+
+    if (wodError) throw new Error(`Failed to fetch workouts: ${wodError.message}`)
+
+    const exerciseMap = new Map(
+      (exercises as Exercise[]).map((ex) => [ex.id, ex])
+    )
+
+    const results: ClosestMatch[] = []
+
+    for (const wod of workouts as Workout[]) {
+      const missingSet = new Set<string>()
+
+      for (const movement of wod.default_movements) {
+        const exercise = exerciseMap.get(movement.exercise_id)
+        if (!exercise) continue
+
+        for (const equip of exercise.equipment_required) {
+          if (!availableEquipment.includes(equip)) {
+            missingSet.add(equip)
+          }
         }
+      }
 
-        return {
-            durationMinutes,
-            type,
-            movements: []
-        };
+      // Only include if there IS missing equipment (otherwise it's an exact match)
+      // and the gap isn't too large (at most 3 missing items)
+      if (missingSet.size > 0 && missingSet.size <= 3) {
+        results.push({
+          wod,
+          missingEquipment: Array.from(missingSet),
+        })
+      }
     }
 
-    /**
-     * Phase 3 (Balanced Movement Rule): Ensures distribution of movement patterns
-     * (e.g., one Push, one Pull, and one Squat/Hinge).
-     */
-    async generateSmartWorkout(durationMinutes: number, availableEquipment: string[]): Promise<GeneratedTimeBlock> {
-        const timeBlock = this.generateTimeBlock(durationMinutes);
+    // Sort by fewest missing items first (closest match)
+    return results.sort((a, b) => a.missingEquipment.length - b.missingEquipment.length)
+  }
 
-        // Fetch valid exercises based on available equipment
-        let exercisesData = null;
-        try {
-            const { data, error } = await supabase.from('exercises').select('*');
-            if (error) throw error;
-            exercisesData = data;
-        } catch (e) {
-            console.warn('Falling back to seeded exercises data due to fetch error:', e);
-            exercisesData = seededExercises;
-        }
+  /**
+   * Rep-Volume Scaling
+   * When substituting equipment, scale reps to maintain stimulus.
+   * Barbell → Dumbbell: +20% reps
+   * Dumbbell → None (bodyweight): +50% reps
+   */
+  scaleRepVolume(
+    reps: number | string,
+    originalEquipment: string,
+    substitutedEquipment: string
+  ): number | string {
+    let scaleFactor = 1
 
-        const validExercises = (exercisesData as Exercise[]).filter((ex: any) => {
-            if (ex.equipment_required.length === 0) return true;
-            return ex.equipment_required.every(eq => availableEquipment.includes(eq));
-        });
-
-        // We want a 3-movement workout with distribution: 1 pull, 1 push, 1 squat/hinge
-        const pullMovements = validExercises.filter(e => e.movement_pattern === 'pull');
-        const pushMovements = validExercises.filter(e => e.movement_pattern === 'push');
-        const squatHingeMovements = validExercises.filter(e => e.movement_pattern === 'squat' || e.movement_pattern === 'hinge');
-
-        // Pick 1 random from each category (or use the first one if doing randomly is overkill for simple matching)
-        // Here we just pick the first match for simplicity
-        const selectedMovements: Exercise[] = [];
-
-        if (pullMovements.length > 0) selectedMovements.push(pullMovements[0]);
-        if (pushMovements.length > 0) selectedMovements.push(pushMovements[0]);
-        if (squatHingeMovements.length > 0) selectedMovements.push(squatHingeMovements[0]);
-
-        timeBlock.movements = selectedMovements.map(ex => ({
-            exercise_id: ex.id,
-            reps: ex.base_difficulty * 5 // Just an arbitrary logic for generated reps
-        }));
-
-        return timeBlock;
+    if (originalEquipment === 'Barbell' && substitutedEquipment === 'Dumbbell') {
+      scaleFactor = 1.2
+    } else if (originalEquipment === 'Dumbbell' && substitutedEquipment === 'None') {
+      scaleFactor = 1.5
+    } else if (originalEquipment === 'Barbell' && substitutedEquipment === 'None') {
+      scaleFactor = 1.8
+    } else {
+      return reps // Unknown substitution, return unchanged
     }
 
-    /**
-     * Phase 3 (Filter Relaxation): If no classic WOD matches, 
-     * find the closest match and display the missing equipment.
-     */
-    async getClosestMatchedWODs(availableEquipment: string[]): Promise<Array<{ wod: Workout, missingEquipment: string[] }>> {
-        let exercisesData = null;
-        let workoutsData = null;
-
-        try {
-            const { data, error } = await supabase.from('exercises').select('*');
-            if (error) throw error;
-            exercisesData = data;
-        } catch (e) {
-            console.warn('Falling back to seeded exercises data due to fetch error:', e);
-            exercisesData = seededExercises;
-        }
-
-        try {
-            const { data, error } = await supabase.from('workouts').select('*');
-            if (error) throw error;
-            workoutsData = data;
-        } catch (e) {
-            console.warn('Falling back to seeded workouts data due to fetch error:', e);
-            workoutsData = seededWorkouts;
-        }
-
-        const exerciseMap = new Map((exercisesData as Exercise[]).map((e: any) => [e.id, e]));
-
-        const results: Array<{ wod: Workout, missingEquipment: string[] }> = [];
-
-        (workoutsData as Workout[]).forEach((wod: any) => {
-            const missingEquipmentForWod = new Set<string>();
-
-            wod.default_movements.forEach(m => {
-                const ex = exerciseMap.get(m.exercise_id);
-                if (ex) {
-                    ex.equipment_required.forEach(eq => {
-                        if (!availableEquipment.includes(eq)) {
-                            missingEquipmentForWod.add(eq);
-                        }
-                    });
-                }
-            });
-
-            if (missingEquipmentForWod.size > 0 && missingEquipmentForWod.size <= 2) {
-                results.push({
-                    wod,
-                    missingEquipment: Array.from(missingEquipmentForWod)
-                });
-            }
-        });
-
-        // Sort by the least missing equipment
-        return results.sort((a, b) => a.missingEquipment.length - b.missingEquipment.length);
+    if (typeof reps === 'number') {
+      return Math.round(reps * scaleFactor)
     }
 
-    /**
-     * Rep-Volume Scaling utility: if substituting barbell for lighter dumbbell,
-     * increase prescribed reps by 20%. Round to nearest integer.
-     */
-    scaleRepVolume(reps: number | string, originalEquipment: string, substitutedEquipment: string): number | string {
-        if (typeof reps === 'string') {
-            // Check if it's a rep scheme like 21-15-9
-            if (reps.includes('-')) {
-                return reps.split('-').map(r => this.scaleRepVolume(parseInt(r, 10), originalEquipment, substitutedEquipment)).join('-');
-            }
-            return reps; // if it's something complex, leave as is
-        }
-
-        // Example scaling logic based on weight classes
-        // Barbell -> Dumbbell = +20%
-        if (originalEquipment === 'Barbell' && substitutedEquipment === 'Dumbbell') {
-            return Math.round(reps * 1.2);
-        }
-
-        // Dumbbell -> No Equipment = +50%
-        if (originalEquipment === 'Dumbbell' && substitutedEquipment === 'None') {
-            return Math.round(reps * 1.5);
-        }
-
-        return reps;
-    }
+    // Handle string rep schemes like "21-15-9"
+    return reps
+      .split('-')
+      .map((r) => Math.round(parseInt(r, 10) * scaleFactor).toString())
+      .join('-')
+  }
 }
