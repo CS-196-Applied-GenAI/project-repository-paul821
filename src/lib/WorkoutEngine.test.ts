@@ -32,7 +32,7 @@ describe('WorkoutEngine', () => {
     it('returns more WODs when more equipment is available', async () => {
       const { wods: wodsNoEquip } = await engine.getMatchedWODs([])
       const { wods: wodsFullGym } = await engine.getMatchedWODs([
-        'Barbell', 'Weights', 'Pull Up Bar', 'Kettlebell',
+        'Barbell', 'Pull Up Bar', 'Kettlebell',
         'Jump Rope', 'Rower', 'Medicine Ball', 'Rings',
       ])
 
@@ -128,7 +128,7 @@ describe('WorkoutEngine', () => {
 
   describe('Phase 3: Filter Relaxation', () => {
     it('finds closest matching WODs and reports missing equipment', async () => {
-      // With only Pull Up Bar, Fran (needs Barbell+Weights+Pull Up Bar) is close
+      // With only Pull Up Bar, Fran (needs Barbell+Pull Up Bar) is close
       const closest = await engine.getClosestMatchedWODs(['Pull Up Bar'])
 
       expect(closest.length).toBeGreaterThan(0)
@@ -148,7 +148,7 @@ describe('WorkoutEngine', () => {
 
     it('excludes exact matches from closest results', async () => {
       // With full gym equipment, exact matches should NOT appear in closest
-      const fullGym = ['Barbell', 'Weights', 'Pull Up Bar', 'Kettlebell', 'Jump Rope', 'Rower', 'Medicine Ball', 'Rings']
+      const fullGym = ['Barbell', 'Pull Up Bar', 'Kettlebell', 'Jump Rope', 'Rower', 'Medicine Ball', 'Rings']
       const { wods: exactMatches } = await engine.getMatchedWODs(fullGym)
       const closestMatches = await engine.getClosestMatchedWODs(fullGym)
 

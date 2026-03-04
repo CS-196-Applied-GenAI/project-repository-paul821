@@ -5,7 +5,7 @@ import type { Workout, GeneratedTimeBlock } from './lib/WorkoutEngine'
 const EQUIPMENT_OPTIONS = [
   'Pull Up Bar',
   'Barbell',
-  'Weights',
+  'Plate',
   'Dumbbell',
   'Kettlebell',
   'Medicine Ball',
