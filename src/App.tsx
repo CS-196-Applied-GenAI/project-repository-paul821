@@ -14,7 +14,6 @@ const EQUIPMENT_OPTIONS = [
   'Rings',
   'Rower',
   'Rope',
-  'GHD Machine',
 ] as const
 
 type WorkoutResult = Workout[] | GeneratedTimeBlock | null
@@ -24,6 +23,7 @@ function App() {
   const [result, setResult] = useState<WorkoutResult>(null)
   const [isGenerating, setIsGenerating] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [fallbackMessage, setFallbackMessage] = useState<string | null>(null)
 
   const handleCopy = useCallback(() => {
     if (!result) return
@@ -33,7 +33,8 @@ function App() {
       const wod = result[0]
       text = `${wod.name} (${wod.type})\n`
       wod.default_movements.forEach((m, i) => {
-        text += `  ${i + 1}. ${typeof m.reps === 'string' ? m.reps : `${m.reps} reps`}\n`
+        const name = m.name ?? `Movement #${i + 1}`
+        text += `  ${i + 1}. ${name} — ${typeof m.reps === 'string' ? m.reps : `${m.reps} reps`}\n`
       })
     } else if (!Array.isArray(result)) {
       text = `${result.durationMinutes} Min ${result.type}\n`
@@ -62,15 +63,28 @@ function App() {
 
   const handleGenerate = async () => {
     setIsGenerating(true)
+    setFallbackMessage(null)
     try {
       const { WorkoutEngine } = await import('./lib/WorkoutEngine')
       const engine = new WorkoutEngine()
 
-      const wods = await engine.getMatchedWODs(selectedEquipment)
+      const { wods, isBodyweightFallback } = await engine.getMatchedWODs(selectedEquipment)
       if (wods.length > 0) {
         const randomWod = wods[Math.floor(Math.random() * wods.length)]
         setResult([randomWod])
+        if (isBodyweightFallback) {
+          const equipLabel = selectedEquipment.join(' + ')
+          setFallbackMessage(
+            `No classic WOD found specifically for ${equipLabel}. Showing a bodyweight workout instead.`
+          )
+        }
       } else {
+        const equipLabel = selectedEquipment.length > 0
+          ? selectedEquipment.join(' + ')
+          : 'your selection'
+        setFallbackMessage(
+          `No classic WOD found for ${equipLabel}. Here's a custom workout built from your available exercises.`
+        )
         const generated = await engine.generateSmartWorkout(15, selectedEquipment)
         setResult(generated)
       }
@@ -201,6 +215,19 @@ function App() {
 
           {result && !isGenerating && (
             <div className="animate-fade-in-up">
+              {fallbackMessage && (
+                <div
+                  className="mb-4 px-4 py-3 rounded-lg text-sm"
+                  style={{
+                    background: 'var(--color-surface-elevated)',
+                    color: 'var(--color-text-muted)',
+                    fontFamily: 'var(--font-mono)',
+                    borderLeft: '3px solid var(--color-accent)',
+                  }}
+                >
+                  {fallbackMessage}
+                </div>
+              )}
               {Array.isArray(result) && result.length > 0 ? (
                 <ClassicWODCard wod={result[0]} />
               ) : !Array.isArray(result) ? (
@@ -262,7 +289,7 @@ function ClassicWODCard({ wod }: { wod: Workout }) {
             style={{ background: 'var(--color-surface-elevated)' }}
           >
             <span className="text-sm" style={{ color: 'var(--color-text-primary)' }}>
-              Movement #{i + 1}
+              {m.name ?? `Movement #${i + 1}`}
             </span>
             <span
               className="text-sm"

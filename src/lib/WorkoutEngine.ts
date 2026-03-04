@@ -13,6 +13,7 @@ export interface Exercise {
 export interface WODMovement {
   exercise_id: string
   reps: number | string
+  name?: string
 }
 
 export interface Workout {
@@ -26,6 +27,11 @@ export interface GeneratedTimeBlock {
   durationMinutes: number
   type: 'AMRAP' | 'EMOM' | 'For Time'
   movements: Array<{ exercise_id: string; name: string; reps: number }>
+}
+
+export interface MatchedWODsResult {
+  wods: Workout[]
+  isBodyweightFallback: boolean
 }
 
 export interface ClosestMatch {
@@ -58,7 +64,7 @@ export class WorkoutEngine {
    * Returns classic WODs from the DB that the user can fully perform
    * with their available equipment.
    */
-  async getMatchedWODs(availableEquipment: string[]): Promise<Workout[]> {
+  async getMatchedWODs(availableEquipment: string[]): Promise<MatchedWODsResult> {
     const { data: exercises, error: exError } = await supabase
       .from('exercises')
       .select('*')
@@ -77,10 +83,42 @@ export class WorkoutEngine {
         .map((ex) => ex.id)
     )
 
-    // Return only workouts where ALL movements use valid exercises
-    return (workouts as Workout[]).filter((wod) =>
+    // Build exercise name lookup and equipment lookup from all exercises
+    const exNameMap = new Map((exercises as Exercise[]).map(e => [e.id, e.name]))
+    const exEquipMap = new Map((exercises as Exercise[]).map(e => [e.id, e.equipment_required]))
+
+    // Helper to enrich movements with exercise names
+    const enrichWod = (wod: Workout) => ({
+      ...wod,
+      default_movements: wod.default_movements.map(m => ({
+        ...m,
+        name: exNameMap.get(m.exercise_id) ?? 'Unknown',
+      })),
+    })
+
+    // Filter to workouts where ALL movements use valid exercises
+    const doableWods = (workouts as Workout[]).filter((wod) =>
       wod.default_movements.every((m) => validExerciseIds.has(m.exercise_id))
     )
+
+    // When equipment is selected, prefer WODs that actually USE it.
+    // Without this, bodyweight WODs (Loredo, etc.) always match regardless
+    // of what equipment is selected, drowning out relevant WODs.
+    if (availableEquipment.length > 0) {
+      const equipmentWods = doableWods.filter((wod) =>
+        wod.default_movements.some((m) => {
+          const equip = exEquipMap.get(m.exercise_id) ?? []
+          return equip.length > 0 // Movement requires at least some equipment
+        })
+      )
+      if (equipmentWods.length > 0) {
+        return { wods: equipmentWods.map(enrichWod), isBodyweightFallback: false }
+      }
+      // No WODs use the selected equipment — fall back to bodyweight
+      return { wods: doableWods.map(enrichWod), isBodyweightFallback: true }
+    }
+
+    return { wods: doableWods.map(enrichWod), isBodyweightFallback: false }
   }
 
   /**

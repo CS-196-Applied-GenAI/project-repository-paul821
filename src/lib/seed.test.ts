@@ -13,7 +13,7 @@ describe('Seeding Integrity', () => {
 
     expect(error).toBeNull()
     expect(exercises).not.toBeNull()
-    expect(exercises!.length).toBeGreaterThanOrEqual(50)
+    expect(exercises!.length).toBeGreaterThanOrEqual(92)
 
     // Verify all movement patterns are covered
     const patterns = new Set(exercises!.map((e: { movement_pattern: string }) => e.movement_pattern))
@@ -35,7 +35,7 @@ describe('Seeding Integrity', () => {
 
     expect(wodError).toBeNull()
     expect(workouts).not.toBeNull()
-    expect(workouts!.length).toBeGreaterThanOrEqual(5)
+    expect(workouts!.length).toBeGreaterThanOrEqual(230)
 
     // Get all exercise IDs from DB
     const { data: exercises } = await supabase

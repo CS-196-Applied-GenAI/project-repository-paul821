@@ -94,7 +94,7 @@ describe('Integration: Generate & Shuffle', () => {
     // Mock the WorkoutEngine module for component isolation
     vi.doMock('./lib/WorkoutEngine', () => ({
       WorkoutEngine: vi.fn().mockImplementation(() => ({
-        getMatchedWODs: vi.fn().mockResolvedValue([]),
+        getMatchedWODs: vi.fn().mockResolvedValue({ wods: [], isBodyweightFallback: false }),
         generateSmartWorkout: vi.fn().mockResolvedValue({
           durationMinutes: 15,
           type: 'EMOM',
@@ -132,18 +132,21 @@ describe('Integration: Generate & Shuffle', () => {
   it('renders a classic WOD when matched WODs are found', async () => {
     vi.doMock('./lib/WorkoutEngine', () => ({
       WorkoutEngine: vi.fn().mockImplementation(() => ({
-        getMatchedWODs: vi.fn().mockResolvedValue([
-          {
-            id: 'wod-1',
-            name: 'Cindy',
-            type: 'AMRAP',
-            default_movements: [
-              { exercise_id: 'ex-1', reps: 5 },
-              { exercise_id: 'ex-2', reps: 10 },
-              { exercise_id: 'ex-3', reps: 15 },
-            ],
-          },
-        ]),
+        getMatchedWODs: vi.fn().mockResolvedValue({
+          wods: [
+            {
+              id: 'wod-1',
+              name: 'Cindy',
+              type: 'AMRAP',
+              default_movements: [
+                { exercise_id: 'ex-1', reps: 5 },
+                { exercise_id: 'ex-2', reps: 10 },
+                { exercise_id: 'ex-3', reps: 15 },
+              ],
+            },
+          ],
+          isBodyweightFallback: false,
+        }),
         generateSmartWorkout: vi.fn(),
       })),
     }))

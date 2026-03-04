@@ -8,7 +8,7 @@ describe('WorkoutEngine', () => {
     it('returns WODs that match available equipment', async () => {
       // With Pull Up Bar, we should get WODs that only need bodyweight + pull up bar
       // Cindy needs: Pull Up Bar (for Pull Up) + bodyweight (Push Up, Air Squat)
-      const wods = await engine.getMatchedWODs(['Pull Up Bar'])
+      const { wods } = await engine.getMatchedWODs(['Pull Up Bar'])
 
       // Cindy should be in the results (only needs Pull Up Bar + bodyweight)
       const wodNames = wods.map((w) => w.name)
@@ -17,7 +17,7 @@ describe('WorkoutEngine', () => {
 
     it('filters out WODs that require missing equipment', async () => {
       // With no equipment, WODs requiring Pull Up Bar, Barbell, etc. should be excluded
-      const wods = await engine.getMatchedWODs([])
+      const { wods } = await engine.getMatchedWODs([])
 
       const wodNames = wods.map((w) => w.name)
 
@@ -30,13 +30,23 @@ describe('WorkoutEngine', () => {
     })
 
     it('returns more WODs when more equipment is available', async () => {
-      const wodsNoEquip = await engine.getMatchedWODs([])
-      const wodsFullGym = await engine.getMatchedWODs([
+      const { wods: wodsNoEquip } = await engine.getMatchedWODs([])
+      const { wods: wodsFullGym } = await engine.getMatchedWODs([
         'Barbell', 'Weights', 'Pull Up Bar', 'Kettlebell',
         'Jump Rope', 'Rower', 'Medicine Ball', 'Rings',
       ])
 
       expect(wodsFullGym.length).toBeGreaterThan(wodsNoEquip.length)
+    })
+
+    it('flags bodyweight fallback when equipment has no specific WODs', async () => {
+      // Rope has no WODs that use Rope Climb exclusively
+      const { isBodyweightFallback } = await engine.getMatchedWODs(['Rope'])
+      expect(isBodyweightFallback).toBe(true)
+
+      // Pull Up Bar has many specific WODs
+      const pullUpResult = await engine.getMatchedWODs(['Pull Up Bar'])
+      expect(pullUpResult.isBodyweightFallback).toBe(false)
     })
   })
 
@@ -139,7 +149,7 @@ describe('WorkoutEngine', () => {
     it('excludes exact matches from closest results', async () => {
       // With full gym equipment, exact matches should NOT appear in closest
       const fullGym = ['Barbell', 'Weights', 'Pull Up Bar', 'Kettlebell', 'Jump Rope', 'Rower', 'Medicine Ball', 'Rings']
-      const exactMatches = await engine.getMatchedWODs(fullGym)
+      const { wods: exactMatches } = await engine.getMatchedWODs(fullGym)
       const closestMatches = await engine.getClosestMatchedWODs(fullGym)
 
       const exactNames = new Set(exactMatches.map((w) => w.name))
